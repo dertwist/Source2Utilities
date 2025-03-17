@@ -15,11 +15,12 @@ from . import utils
 # Import submodules
 from . import sxao
 from .modules import ao_baking, naming, attributes
+from .modules import color_attributes  # Color attributes module
 
 bl_info = {
     'name': 'Source 2 Utilities',
     'author': 'Nucky3d',
-    'version': (1, 0, 0),
+    'version': (0, 1, 1),
     'blender': (3, 6, 0),
     'location': 'View3D > Source 2',
     'description': 'Utility tools for Source 2 workflows',
@@ -27,10 +28,6 @@ bl_info = {
     'tracker_url': '',
     'category': 'Object'
 }
-
-# ------------------
-# (Other common functions have been moved to utils.py)
-# ------------------
 
 # ------------------
 # MAIN PANEL
@@ -94,8 +91,10 @@ class VIEW3D_PT_source2_utilities(Panel):
         row = box.row()
         row.operator("object.bake_ao_to_selected_attribute", text="Bake AO to Attribute")
 
+        # The Color Attribute sub-panel will appear under the main panel as a subcategory
+
 # ------------------
-# PROPERTIES, HANDLERS, AND REGISTRATION (Using functions defined in __init__)
+# PROPERTIES, HANDLERS, AND REGISTRATION
 # ------------------
 
 def register_properties():
@@ -270,6 +269,7 @@ def register():
         naming.naming_register()
         attributes.attributes_register()
         ao_baking.ao_baking_register()
+        color_attributes.register()  # Register color attributes module
         _new_objects.clear()
         if on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post:
             bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
@@ -284,7 +284,7 @@ def unregister():
             bpy.app.handlers.depsgraph_update_post.remove(on_depsgraph_update)
     except Exception:
         pass
-    for unregister_func in (ao_baking.ao_baking_unregister, attributes.attributes_unregister, naming.naming_unregister):
+    for unregister_func in (ao_baking.ao_baking_unregister, attributes.attributes_unregister, naming.naming_unregister, color_attributes.unregister):
         try:
             unregister_func()
         except Exception:
