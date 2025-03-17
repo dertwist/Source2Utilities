@@ -759,7 +759,10 @@ def register_properties():
         default=False
     )
 
+
 _new_objects = set()
+_processed_objects = set()
+
 
 @persistent
 def on_depsgraph_update(depsgraph):
@@ -770,12 +773,43 @@ def on_depsgraph_update(depsgraph):
     if not scene.s2_auto_apply_to_new:
         return
 
-    for update in depsgraph.updates:
-        if update.is_updated_geometry and hasattr(update.id, 'type') and update.id.type == 'MESH':
-            obj = update.id
-            if obj not in _new_objects and obj.users > 0:
+    # Check for new objects
+    for obj in context.scene.objects:
+        if (obj.type == 'MESH' and
+                obj not in _new_objects and
+                obj not in _processed_objects and
+                obj.users > 0):
+
+            # Check if this is a newly created object
+            is_new = True
+            if hasattr(obj, 'data') and obj.data:
+                # Skip objects that already have properly named UV maps
+                if obj.data.uv_layers and obj.data.uv_layers[0].name == "map":
+                    is_new = False
+
+                # Skip objects that already have our color attributes
+                if ("VertexPaintTintColor" in obj.data.attributes and
+                        "VertexPaintBlendParams" in obj.data.attributes):
+                    is_new = False
+
+            if is_new:
                 _new_objects.add(obj)
                 process_new_object(context, obj)
+                _processed_objects.add(obj)
+
+    # Also check for updated objects from the depsgraph
+    for update in depsgraph.updates:
+        if (update.is_updated_geometry and
+                hasattr(update.id, 'type') and
+                update.id.type == 'MESH'):
+
+            obj = update.id
+            if (obj not in _new_objects and
+                    obj not in _processed_objects and
+                    obj.users > 0):
+                _new_objects.add(obj)
+                process_new_object(context, obj)
+                _processed_objects.add(obj)
 
 def process_new_object(context, obj):
     """Apply UV renaming and color attribute conversion to a new object"""
