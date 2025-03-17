@@ -20,7 +20,7 @@ from .modules import color_attributes  # Color attributes module
 bl_info = {
     'name': 'Source 2 Utilities',
     'author': 'Nucky3d',
-    'version': (0, 2, 0),
+    'version': (0, 3, 0),
     'blender': (3, 6, 0),
     'location': 'View3D > Source 2',
     'description': 'Utility tools for Source 2 workflows',
@@ -84,6 +84,20 @@ class VIEW3D_PT_source2_utilities(Panel):
         row.prop(scene, "s2_ao_distance", text="Ray Distance")
         row = box.row()
         row.prop(scene, "s2_ao_global_local_mix", text="Global Local Mix")
+
+        # Advanced AO options
+        row = box.row()
+        row.prop(scene, "s2_ao_expand_advanced", text="Advanced Options",
+                 icon='TRIA_DOWN' if scene.s2_ao_expand_advanced else 'TRIA_RIGHT',
+                 emboss=False)
+
+        if scene.s2_ao_expand_advanced:
+            col = box.column(align=True)
+            col.prop(scene, "s2_ao_intensity", text="Intensity")
+            col.prop(scene, "s2_ao_contrast", text="Contrast")
+            col.prop(scene, "s2_ao_bias", text="Bias")
+            col.prop(scene, "s2_ao_invert", text="Invert")
+
         row = box.row()
         row.prop(scene, "s2_ao_ground_plane", text="Ground Plane")
         row = box.row()
@@ -175,6 +189,38 @@ def register_properties():
         description="Use Geonode AO algorithm instead of SXAO",
         default=False
     )
+    # New advanced AO properties
+    scene.s2_ao_expand_advanced = BoolProperty(
+        name="Expand Advanced Options",
+        description="Show advanced AO baking options",
+        default=False
+    )
+    scene.s2_ao_intensity = FloatProperty(
+        name="Intensity",
+        description="Control the strength of the AO effect",
+        default=1.0,
+        min=0.0,
+        max=2.0
+    )
+    scene.s2_ao_contrast = FloatProperty(
+        name="Contrast",
+        description="Adjust the contrast of the AO effect",
+        default=1.0,
+        min=0.1,
+        max=2.0
+    )
+    scene.s2_ao_bias = FloatProperty(
+        name="Bias",
+        description="Bias the AO calculation to reduce artifacts in crevices",
+        default=0.0,
+        min=0.0,
+        max=0.5
+    )
+    scene.s2_ao_invert = BoolProperty(
+        name="Invert",
+        description="Invert the AO result",
+        default=False
+    )
 
 _new_objects = set()
 _processed_objects = set()
@@ -252,7 +298,11 @@ def process_new_object(context, obj):
         context.view_layer.objects.active = old_active
 
 def unregister_properties():
-    for prop in ["s2_prefix", "s2_name", "s2_suffix", "s2_add_sizes", "s2_size_format", "s2_auto_apply_to_new", "s2_ao_attribute", "s2_ao_ray_count", "s2_ao_distance", "s2_ao_global_local_mix", "s2_ao_ground_plane", "s2_ao_geonode_ao"]:
+    for prop in ["s2_prefix", "s2_name", "s2_suffix", "s2_add_sizes", "s2_size_format",
+                "s2_auto_apply_to_new", "s2_ao_attribute", "s2_ao_ray_count",
+                "s2_ao_distance", "s2_ao_global_local_mix", "s2_ao_ground_plane",
+                "s2_ao_geonode_ao", "s2_ao_expand_advanced", "s2_ao_intensity",
+                "s2_ao_contrast", "s2_ao_bias", "s2_ao_invert"]:
         if hasattr(bpy.types.Scene, prop):
             try:
                 delattr(bpy.types.Scene, prop)

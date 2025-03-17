@@ -32,6 +32,10 @@ class OBJECT_OT_bake_ao_to_selected_attribute(bpy.types.Operator):
         ray_distance = scene.s2_ao_distance
         ground_plane = scene.s2_ao_ground_plane
         geonode_ao = scene.s2_ao_geonode_ao
+        intensity = scene.s2_ao_intensity
+        contrast = scene.s2_ao_contrast
+        invert = scene.s2_ao_invert
+        bias = scene.s2_ao_bias
 
         # Save the original active object and selection state to restore later
         original_active = context.view_layer.objects.active
@@ -66,7 +70,7 @@ class OBJECT_OT_bake_ao_to_selected_attribute(bpy.types.Operator):
             try:
                 # Calculate AO colors based on the chosen method
                 if geonode_ao:
-                    colors = self.calculate_geonode_ao(obj, ray_count, local_global_mix, ray_distance, ground_plane)
+                    colors = self.calculate_geonode_ao(obj, ray_count, local_global_mix, ray_distance, ground_plane, intensity, contrast, invert, bias)
                 else:
                     generator = sxao.SXAO_generate()
                     temp_plane = None
@@ -75,6 +79,9 @@ class OBJECT_OT_bake_ao_to_selected_attribute(bpy.types.Operator):
                     colors = generator.occlusion_list(obj, raycount=ray_count, blend=local_global_mix, dist=ray_distance, groundplane=ground_plane)
                     if temp_plane:
                         bpy.data.objects.remove(temp_plane, do_unlink=True)
+
+                    # Apply post-processing to the colors
+                    colors = self.post_process_colors(colors, intensity, contrast, invert, bias)
 
                 # Verify color data was computed and matches the expected length
                 if not colors:
@@ -124,9 +131,44 @@ class OBJECT_OT_bake_ao_to_selected_attribute(bpy.types.Operator):
                     message += f"\n- {name}: {reason}"
                 if len(failed_objects) > 3:
                     message += f"\n- ... and {len(failed_objects) - 3} more objects"
-            return {'WARNING'}, message
+            self.report({'WARNING'}, message)
+            return {'FINISHED'}
         else:
             return utils.report_info(self, f"Successfully baked SXAO to '{target_attr}' on all {processed_count} objects")
+
+    def post_process_colors(self, colors, intensity, contrast, invert, bias):
+        """Apply post-processing to the AO colors based on user parameters."""
+        processed_colors = colors.copy()
+
+        # Process each color value
+        for i in range(0, len(processed_colors), 4):
+            # Get the original AO value (assuming RGB are the same)
+            ao_value = processed_colors[i]
+
+            # Apply bias
+            ao_value = max(0.0, ao_value - bias)
+
+            # Apply contrast (centered around 0.5)
+            if contrast != 1.0:
+                ao_value = 0.5 + (ao_value - 0.5) * contrast
+                ao_value = max(0.0, min(1.0, ao_value))
+
+            # Apply intensity
+            ao_value = 1.0 - ((1.0 - ao_value) * intensity)
+            ao_value = max(0.0, min(1.0, ao_value))
+
+            # Apply inversion if needed
+            if invert:
+                ao_value = 1.0 - ao_value
+
+            # Set the processed value back to the color array
+            processed_colors[i] = ao_value
+            processed_colors[i+1] = ao_value
+            processed_colors[i+2] = ao_value
+            # Keep alpha at 1.0
+            processed_colors[i+3] = 1.0
+
+        return processed_colors
 
     def create_ground_plane(self, context, obj):
         """Create a temporary ground plane for AO calculation."""
@@ -148,7 +190,7 @@ class OBJECT_OT_bake_ao_to_selected_attribute(bpy.types.Operator):
         context.view_layer.objects.active = obj
         return plane
 
-    def calculate_geonode_ao(self, obj, ray_count, blend, distance, ground_plane):
+    def calculate_geonode_ao(self, obj, ray_count, blend, distance, ground_plane, intensity=1.0, contrast=1.0, invert=False, bias=0.0):
         """Calculate AO using a placeholder Geometry Nodes approach."""
         mesh = obj.data
         loop_count = len(mesh.loops)
@@ -158,6 +200,8 @@ class OBJECT_OT_bake_ao_to_selected_attribute(bpy.types.Operator):
         bm.normal_update()
         world_matrix = obj.matrix_world
         vert_ao = {}
+
+        # First pass: calculate raw AO values
         for v in bm.verts:
             pos = world_matrix @ v.co
             normal = (world_matrix.to_3x3() @ v.normal).normalized()
@@ -172,10 +216,31 @@ class OBJECT_OT_bake_ao_to_selected_attribute(bpy.types.Operator):
                     hit, _, _, _ = obj.ray_cast(pos + normal * 0.001, ray_dir, distance=distance)
                     if hit:
                         ao_value -= 1.0 / ray_count
+
+            # Apply ground plane effect if enabled
             if ground_plane and pos.z < 0.1:
                 ground_factor = 1.0 - min(1.0, pos.z / 0.1)
                 ao_value *= (1.0 - ground_factor * 0.5)
+
+            # Apply bias
+            ao_value = max(0.0, ao_value - bias)
+
+            # Apply contrast (centered around 0.5)
+            if contrast != 1.0:
+                ao_value = 0.5 + (ao_value - 0.5) * contrast
+                ao_value = max(0.0, min(1.0, ao_value))
+
+            # Apply intensity
+            ao_value = 1.0 - ((1.0 - ao_value) * intensity)
+            ao_value = max(0.0, min(1.0, ao_value))
+
+            # Apply inversion if needed
+            if invert:
+                ao_value = 1.0 - ao_value
+
             vert_ao[v.index] = max(0.0, min(1.0, ao_value))
+
+        # Second pass: assign colors to loops
         for face in bm.faces:
             for loop in face.loops:
                 loop_idx = loop.index
@@ -184,6 +249,7 @@ class OBJECT_OT_bake_ao_to_selected_attribute(bpy.types.Operator):
                 colors[loop_idx * 4 + 1] = ao_val
                 colors[loop_idx * 4 + 2] = ao_val
                 colors[loop_idx * 4 + 3] = 1.0
+
         bm.free()
         return colors
 
