@@ -123,14 +123,14 @@ def register_properties():
         name="Size Format",
         description="Dimensions to include in the name",
         items=[
-            ('X', "Only X", "Include only X dimension"),
-            ('Y', "Only Y", "Include only Y dimension"),
-            ('Z', "Only Z", "Include only Z dimension"),
+            ('X', "X", "Include only X dimension"),
+            ('Y', "Y", "Include only Y dimension"),
+            ('Z', "Z", "Include only Z dimension"),
             ('XY', "XY", "Include X & Y dimensions"),
             ('XZ', "XZ", "Include X & Z dimensions"),
             ('XYZ', "XYZ", "Include X, Y & Z dimensions"),
         ],
-        default='XYZ'
+        default='X'
     )
     scene.s2_auto_apply_to_new = BoolProperty(
         name="Auto Apply to New Objects",
@@ -149,7 +149,7 @@ def register_properties():
     scene.s2_ao_ray_count = IntProperty(
         name="Ray Count",
         description="Number of rays to use for AO calculation",
-        default=200,
+        default=64,
         min=1
     )
     scene.s2_ao_distance = FloatProperty(
