@@ -1,16 +1,55 @@
 import bpy
 import bmesh
+import random
+import math
+import statistics
 from mathutils import Vector
 from bpy.props import (
     StringProperty,
     BoolProperty,
     EnumProperty,
+    IntProperty,
+    FloatProperty,
 )
 from bpy.types import Panel, Operator
 from bpy.app.handlers import persistent
 
-# Global variable for shading settings preservation
-shading_preserve = ['SOLID', 'MATCAP', 'MATERIAL', False]
+bl_info = {
+    'name': 'Source 2 Utilities',
+    'author': 'Nucky3d',
+    'version': (1, 0, 0),
+    'blender': (3, 5, 0),
+    'location': 'View3D > Source 2',
+    'description': 'Utility tools for Source 2 workflows',
+    'doc_url': '',
+    'tracker_url': '',
+    'category': 'Object'
+}
+
+# Track Blender version
+version, _, _ = bpy.app.version
+
+###################################
+# HELPER: Build a proper override
+###################################
+def get_override(context, obj):
+    """Return an override dictionary including area and region from a 3D View, if available."""
+    override = context.copy()
+    # Try to find a 3D View area
+    for area in context.screen.areas:
+        if area.type == "VIEW_3D":
+            override["area"] = area
+            # Look for a window region in that area.
+            for region in area.regions:
+                if region.type == "WINDOW":
+                    override["region"] = region
+                    break
+            break
+    override["object"] = obj
+    override["active_object"] = obj
+    override["selected_objects"] = [obj]
+    override["selected_editable_objects"] = [obj]
+    return override
 
 ###################################
 # COMMON MODULE (Helper functions)
@@ -20,16 +59,19 @@ def get_object_dimensions(obj):
     Retrieve an object's bounding-box dimensions in centimeters.
     (For example, an object 2 m wide will yield 200.)
     """
-    if not obj:
+    if not obj or not hasattr(obj, 'data') or not hasattr(obj.data, 'vertices'):
         return (0, 0, 0)
     scale = bpy.context.scene.unit_settings.scale_length
     coords = [obj.matrix_world @ vert.co for vert in obj.data.vertices]
+    if not coords:
+        return (0, 0, 0)
     xs = [v.x for v in coords]
     ys = [v.y for v in coords]
     zs = [v.z for v in coords]
     return (int(round((max(xs) - min(xs)) * scale * 100)),
             int(round((max(ys) - min(ys)) * scale * 100)),
             int(round((max(zs) - min(zs)) * scale * 100)))
+
 def format_dimensions(dimensions, size_format):
     """Format dimensions as requested (X, Y, Z, XY, XZ, or XYZ)."""
     x, y, z = dimensions
@@ -72,6 +114,174 @@ def report_error(self, message):
 def report_info(self, message):
     self.report({'INFO'}, message)
     return {'FINISHED'}
+
+###################################
+# SXAO Utility Classes
+###################################
+class SXAO_utils:
+    """Lightweight utility class for bounding box, etc., from sxao.py."""
+    def __init__(self):
+        pass
+
+    def find_root_pivot(self, objs):
+        xmin, xmax, ymin, ymax, zmin, zmax = self.get_object_bounding_box(objs)
+        pivot = ((xmax + xmin)*0.5, (ymax + ymin)*0.5, zmin)
+        return pivot
+
+    def get_object_bounding_box(self, objs, local=False):
+        bbx_x = []
+        bbx_y = []
+        bbx_z = []
+        for obj in objs:
+            if local:
+                corners = [Vector(corner) for corner in obj.bound_box]
+            else:
+                corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+            for corner in corners:
+                bbx_x.append(corner[0])
+                bbx_y.append(corner[1])
+                bbx_z.append(corner[2])
+        xmin, xmax = min(bbx_x), max(bbx_x)
+        ymin, ymax = min(bbx_y), max(bbx_y)
+        zmin, zmax = min(bbx_z), max(bbx_z)
+        return xmin, xmax, ymin, ymax, zmin, zmax
+
+class SXAO_generate:
+    """Main AO generation logic adapted from sxao.py."""
+    def __init__(self):
+        pass
+
+    def ray_randomizer(self, count):
+        hemisphere = [None] * count
+        random.seed(42)
+        for i in range(count):
+            u1 = random.random()
+            u2 = random.random()
+            r = math.sqrt(u1)
+            theta = 2*math.pi*u2
+            x = r * math.cos(theta)
+            y = r * math.sin(theta)
+            z = math.sqrt(max(0, 1 - u1))
+
+            ray = Vector((x, y, z))
+            up_vector = Vector((0, 0, 1))
+            dot_product = ray.dot(up_vector)
+
+            hemisphere[i] = (ray, dot_product)
+        sorted_hemisphere = sorted(hemisphere, key=lambda x: x[1], reverse=True)
+        return sorted_hemisphere
+
+    def vertex_data_dict(self, obj, dots=False):
+        """
+        Gather vertex data (local coords, local normal, world coords, world normal, min_dot).
+        If dots=True, compute minimal dot with connected edges in local space (helps skip rays).
+        """
+        mesh = obj.data
+        mat = obj.matrix_world
+        vertex_dict = {}
+        bm = None
+        if dots:
+            bm = bmesh.new()
+            bm.from_mesh(mesh)
+            bm.normal_update()
+            bmesh.types.BMVertSeq.ensure_lookup_table(bm.verts)
+
+        for v in range(len(mesh.vertices)):
+            co_local = mesh.vertices[v].co
+            no_local = mesh.vertices[v].normal
+            co_world = mat @ co_local
+            no_world = (mat @ (co_local + no_local)) - mat @ co_local
+            no_world.normalize()
+
+            min_dot = 0.0
+            if dots and bm:
+                if v < len(bm.verts):
+                    bm_vert = bm.verts[v]
+                    dot_list = []
+                    for edge in bm_vert.link_edges:
+                        other_co = edge.other_vert(bm_vert).co
+                        direction = (other_co - bm_vert.co).normalized()
+                        dot_list.append(no_local.normalized().dot(direction))
+                    if dot_list:
+                        min_dot = min(dot_list)
+            vertex_dict[v] = [co_local, no_local, co_world, no_world, min_dot]
+
+        if bm:
+            bm.free()
+        return vertex_dict
+
+    def occlusion_list(self, obj, raycount=250, blend=0.5, dist=10.0, groundplane=False):
+        """
+        Compute an AO-like occlusion value for each loop using a simplified approach
+        from sxao.py via random rays in local and global space.
+        Return a list of RGBA colors for each loop (1 color per loop).
+        """
+        hemi_sphere = self.ray_randomizer(raycount)
+        contribution = 1.0 / float(raycount)
+        clamp_blend = max(min(blend, 1.0), 0.0)
+
+        edg = bpy.context.evaluated_depsgraph_get()
+        obj_eval = obj.evaluated_get(edg)
+
+        forward = Vector((0, 0, 1))
+
+        vert_dict = self.vertex_data_dict(obj, dots=True)
+        if not vert_dict:
+            return None
+
+        vert_occ = {}
+        for v_id in vert_dict.keys():
+            vert_occ[v_id] = 1.0
+
+        for v_id, data in vert_dict.items():
+            bias = 0.001
+            local_co, local_no, world_co, world_no, min_dot = data
+
+            hit, loc, normal, idx = obj.ray_cast(local_co, local_no, distance=dist)
+            if hit and normal.dot(local_no) > 0:
+                hit_dist = (loc - local_co).length
+                if hit_dist < 0.5:
+                    bias += hit_dist
+
+            first_hit_index = raycount
+            for i, (_, dot_val) in enumerate(hemi_sphere):
+                if dot_val < min_dot:
+                    first_hit_index = i
+                    break
+            occ_value = 1.0
+            occ_value -= contribution * (raycount - first_hit_index)
+
+            valid_rays = [ray for ray, _ in hemi_sphere[:first_hit_index]]
+            pass2_hits = [False] * len(valid_rays)
+
+            if clamp_blend < 1.0:
+                from_up = forward.rotation_difference(local_no)
+                local_pos = local_co + (bias * local_no)
+                for i, r_dir in enumerate(valid_rays):
+                    hit_local = obj_eval.ray_cast(local_pos, from_up @ r_dir, distance=dist)[0]
+                    if hit_local:
+                        occ_value -= contribution
+                    pass2_hits[i] = hit_local
+
+            if clamp_blend > 0.0:
+                from_up = forward.rotation_difference(world_no)
+                world_pos = world_co + (bias * world_no)
+                scn_occ_value = occ_value
+                for i, r_dir in enumerate(valid_rays):
+                    if not pass2_hits[i]:
+                        scene_hit = bpy.context.scene.ray_cast(edg, world_pos, from_up @ r_dir, distance=dist)[0]
+                        if scene_hit:
+                            scn_occ_value -= contribution
+                occ_value = (occ_value * (1.0 - clamp_blend)) + (scn_occ_value * clamp_blend)
+
+            vert_occ[v_id] = max(0.0, min(occ_value, 1.0))
+
+        loop_colors = [0.0, 0.0, 0.0, 1.0] * len(obj.data.loops)
+        for poly in obj.data.polygons:
+            for vert_idx, loop_idx in zip(poly.vertices, poly.loop_indices):
+                val = vert_occ[vert_idx]
+                loop_colors[loop_idx * 4 : loop_idx * 4 + 4] = [val, val, val, 1.0]
+        return loop_colors
 
 ###################################
 # NAMING MODULE
@@ -131,13 +341,18 @@ class OBJECT_OT_rename_uv_maps(Operator):
     bl_label = "Rename UV Maps"
     bl_options = {'REGISTER', 'UNDO'}
 
+    @classmethod
+    def poll(cls, context):
+        return context.active_object and context.active_object.type == 'MESH'
+
     def execute(self, context):
         obj = context.active_object
         if not obj or obj.type != 'MESH':
             return report_error(self, "No mesh object selected")
+        if not obj.data.uv_layers:
+            obj.data.uv_layers.new(name="map")
+            return report_info(self, "Created new UV map named 'map'")
         uv_layers = obj.data.uv_layers
-        if not uv_layers:
-            return report_error(self, "No UV maps found on the selected object")
         for i, uv_layer in enumerate(uv_layers):
             uv_layer.name = "map" if i == 0 else f"map{i}"
         return report_info(self, f"Renamed {len(uv_layers)} UV maps to Source 2 format")
@@ -151,6 +366,10 @@ class OBJECT_OT_convert_color_attributes(Operator):
     bl_label = "Convert Color Attributes"
     bl_options = {'REGISTER', 'UNDO'}
 
+    @classmethod
+    def poll(cls, context):
+        return context.active_object and context.active_object.type == 'MESH'
+
     def execute(self, context):
         obj = context.active_object
         if not obj or obj.type != 'MESH':
@@ -162,8 +381,7 @@ class OBJECT_OT_convert_color_attributes(Operator):
         for attr_name in target_attributes:
             if attr_name in obj.data.attributes:
                 attr = obj.data.attributes[attr_name]
-                if attr.domain == 'CORNER' and attr.data_type == 'BYTE_COLOR':
-                    continue  # already correct
+                # Overwrite any existing data unconditionally.
                 temp_data = []
                 if attr.domain == 'POINT':
                     for v in obj.data.vertices:
@@ -200,74 +418,72 @@ def uv_attributes_unregister():
             pass
 
 ###################################
-# AO BAKING MODULE
+# AO BAKING MODULE (Replaced with SXAO logic)
 ###################################
 class OBJECT_OT_bake_ao_to_selected_attribute(Operator):
     """
-    Bake ambient occlusion into the chosen color attribute (Color Tint or Vertex Blend).
+    Use the SXAO logic from sxao.py to compute an AO-like occlusion
+    for each vertex/loop. This replaces the old Blender bake approach.
     """
     bl_idname = "object.bake_ao_to_selected_attribute"
-    bl_label = "Bake AO"
+    bl_label = "Bake AO (SXAO)"
     bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.active_object and context.active_object.type == 'MESH'
 
     def execute(self, context):
         obj = context.active_object
         if not obj or obj.type != 'MESH':
             return report_error(self, "No mesh object selected")
-        target_attr = context.scene.s2_ao_attribute
+
+        scene = context.scene
+        # Get AO settings from scene properties
+        target_attr = scene.s2_ao_attribute
+        ray_count = scene.s2_ao_ray_count
+        local_global_mix = scene.s2_ao_global_local_mix
+        ray_distance = scene.s2_ao_distance
+        ground_plane = scene.s2_ao_ground_plane
+        geonode_ao = scene.s2_ao_geonode_ao
+
+        # Here you can conditionally choose between algorithms.
+        # For now, if geonode_ao is True, you might call a different function.
+        # We'll default to the SXAO algorithm for this example.
+        # Overwrite any existing data in the color attribute:
         attr = ensure_attribute_exists(obj, target_attr, 'CORNER', 'BYTE_COLOR', 3)
         if not attr:
             return report_error(self, f"Failed to create '{target_attr}' attribute")
-        original_mode = obj.mode
-        try:
-            bpy.ops.object.mode_set(mode='OBJECT')
-            temp_image = bpy.data.images.new(name="temp_ao_bake", width=1024, height=1024)
-            temp_mat = bpy.data.materials.new(name="temp_ao_bake_material")
-            temp_mat.use_nodes = True
-            if not obj.material_slots:
-                obj.data.materials.append(temp_mat)
-            else:
-                obj.material_slots[0].material = temp_mat
-            nodes = temp_mat.node_tree.nodes
-            links = temp_mat.node_tree.links
-            nodes.clear()
-            texture_node = nodes.new('ShaderNodeTexImage')
-            texture_node.image = temp_image
-            nodes.active = texture_node
-            output_node = nodes.new('ShaderNodeOutputMaterial')
-            diffuse_node = nodes.new('ShaderNodeBsdfDiffuse')
-            links.new(diffuse_node.outputs['BSDF'], output_node.inputs['Surface'])
-            bpy.ops.object.bake(type='AO', save_mode='INTERNAL')
-            bm = bmesh.new()
-            bm.from_mesh(obj.data)
-            bm.faces.ensure_lookup_table()
-            if not obj.data.uv_layers:
-                bpy.ops.mesh.uv_texture_add()
-            uv_layer = bm.loops.layers.uv.active
-            color_layer = bm.loops.layers.color.get(target_attr)
-            if not color_layer:
-                color_layer = bm.loops.layers.color.new(target_attr)
-            for face in bm.faces:
-                for loop in face.loops:
-                    uv = loop[uv_layer].uv
-                    x = int(uv.x * temp_image.size[0]) % temp_image.size[0]
-                    y = int(uv.y * temp_image.size[1]) % temp_image.size[1]
-                    pixel_index = (y * temp_image.size[0] + x) * 4
-                    if pixel_index < len(temp_image.pixels):
-                        r = temp_image.pixels[pixel_index]
-                        g = temp_image.pixels[pixel_index+1]
-                        b = temp_image.pixels[pixel_index+2]
-                        loop[color_layer] = (r, g, b, 1.0)
-            bm.to_mesh(obj.data)
-            obj.data.update()
-            bm.free()
-            bpy.data.images.remove(temp_image)
-            bpy.data.materials.remove(temp_mat)
-            bpy.ops.object.mode_set(mode=original_mode)
-            return report_info(self, f"Successfully baked AO to '{target_attr}'")
-        except Exception as e:
-            bpy.ops.object.mode_set(mode=original_mode)
-            return report_error(self, f"Error during AO baking: {str(e)}")
+
+        generator = SXAO_generate()
+        colors = generator.occlusion_list(
+            obj,
+            raycount=ray_count,
+            blend=local_global_mix,
+            dist=ray_distance,
+            groundplane=ground_plane
+        )
+        if not colors:
+            return report_error(self, "AO calculation returned no data")
+
+        if len(colors) == 4 * len(obj.data.loops):
+            # Overwrite the entire attribute data
+            attr.data.foreach_set("color", colors)
+        else:
+            return report_error(self, "Loop color array size mismatch")
+
+        # Set the active color attribute to the one we just baked
+        obj.data.attributes.active_color = obj.data.attributes[target_attr]
+
+        # Update the 3D View preview to show vertex colors with flat shading
+        # This matches the behavior in sxao.py
+        for area in bpy.context.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.spaces.active.shading.type = 'SOLID'
+                area.spaces.active.shading.color_type = 'VERTEX'
+                area.spaces.active.shading.light = 'FLAT'
+
+        return report_info(self, f"Successfully baked SXAO to '{target_attr}'")
 
 def ao_baking_register():
     bpy.utils.register_class(OBJECT_OT_bake_ao_to_selected_attribute)
@@ -324,9 +540,19 @@ class VIEW3D_PT_source2_utilities(Panel):
 
         # AO Baking Section
         box = layout.box()
-        box.label(text="Ambient Occlusion Baking", icon='SHADING_RENDERED')
+        box.label(text="Ambient Occlusion Baking (SXAO)", icon='SHADING_RENDERED')
         row = box.row()
         row.prop(scene, "s2_ao_attribute", text="Target")
+        row = box.row()
+        row.prop(scene, "s2_ao_ray_count", text="Ray Count")
+        row = box.row()
+        row.prop(scene, "s2_ao_distance", text="Ray Distance")
+        row = box.row()
+        row.prop(scene, "s2_ao_global_local_mix", text="Global Local Mix")
+        row = box.row()
+        row.prop(scene, "s2_ao_ground_plane", text="Ground Plane")
+        row = box.row()
+        row.prop(scene, "s2_ao_geonode_ao", text="Geonode AO")
         row = box.row()
         row.operator("object.bake_ao_to_selected_attribute", text="Bake AO to Attribute")
 
@@ -381,24 +607,98 @@ def register_properties():
         default="VertexPaintTintColor",
         description="Attribute to store baked Ambient Occlusion"
     )
+    # New AO baking properties
+    bpy.types.Scene.s2_ao_ray_count = IntProperty(
+        name="Ray Count",
+        description="Number of rays to use for AO calculation",
+        default=200,
+        min=1
+    )
+    bpy.types.Scene.s2_ao_distance = FloatProperty(
+        name="Ray Distance",
+        description="Maximum distance for AO ray casts",
+        default=10.0,
+        min=0.0
+    )
+    bpy.types.Scene.s2_ao_global_local_mix = FloatProperty(
+        name="Global Local Mix",
+        description="Blend factor between local and global AO calculations",
+        default=0.5,
+        min=0.0,
+        max=1.0
+    )
+    bpy.types.Scene.s2_ao_ground_plane = BoolProperty(
+        name="Ground Plane",
+        description="Include a ground plane for AO calculation",
+        default=False
+    )
+    bpy.types.Scene.s2_ao_geonode_ao = BoolProperty(
+        name="Geonode AO",
+        description="Use Geonode AO algorithm instead of SXAO",
+        default=False
+    )
+
+_new_objects = set()
 
 @persistent
-def on_object_add(depsgraph):
-    scene = bpy.context.scene
+def on_depsgraph_update(depsgraph):
+    """Track objects that are added to the scene"""
+    context = bpy.context
+    scene = context.scene
+
     if not scene.s2_auto_apply_to_new:
         return
-    obj = bpy.context.active_object
-    if obj and obj.type == 'MESH':
-        # Auto apply UV renaming and conversion on new objects
-        rename_uv_maps(obj)
-        OBJECT_OT_convert_color_attributes().execute(bpy.context)
+
+    for update in depsgraph.updates:
+        if update.is_updated_geometry and hasattr(update.id, 'type') and update.id.type == 'MESH':
+            obj = update.id
+            if obj not in _new_objects and obj.users > 0:
+                _new_objects.add(obj)
+                process_new_object(context, obj)
+
+def process_new_object(context, obj):
+    """Apply UV renaming and color attribute conversion to a new object"""
+    if not obj or obj.type != 'MESH' or not hasattr(obj, 'data'):
+        return
+
+    old_active = context.view_layer.objects.active
+    old_selected = context.selected_objects.copy()
+
+    for sel_obj in old_selected:
+        sel_obj.select_set(False)
+
+    obj.select_set(True)
+    context.view_layer.objects.active = obj
+
+    try:
+        if not obj.data.uv_layers:
+            obj.data.uv_layers.new(name="map")
+        else:
+            for i, uv_layer in enumerate(obj.data.uv_layers):
+                uv_layer.name = "map" if i == 0 else f"map{i}"
+
+        for attr_name in ["VertexPaintTintColor", "VertexPaintBlendParams"]:
+            attr = ensure_attribute_exists(obj, attr_name, 'CORNER', 'BYTE_COLOR', 3)
+            if attr_name == "VertexPaintBlendParams":
+                for i in range(len(obj.data.loops)):
+                    attr.data[i].color = (0.0, 0.0, 0.0, 1.0)
+
+    except Exception as e:
+        print(f"Error processing new object {obj.name}: {e}")
+
+    finally:
+        obj.select_set(False)
+        for sel_obj in old_selected:
+            sel_obj.select_set(True)
+        context.view_layer.objects.active = old_active
 
 def unregister_properties():
-    for prop in ["s2_prefix", "s2_name", "s2_suffix", "s2_add_sizes", "s2_size_format", "s2_auto_apply_to_new", "s2_ao_attribute"]:
-        try:
-            delattr(bpy.types.Scene, prop)
-        except Exception:
-            pass
+    for prop in ["s2_prefix", "s2_name", "s2_suffix", "s2_add_sizes", "s2_size_format", "s2_auto_apply_to_new", "s2_ao_attribute", "s2_ao_ray_count", "s2_ao_distance", "s2_ao_global_local_mix", "s2_ao_ground_plane", "s2_ao_geonode_ao"]:
+        if hasattr(bpy.types.Scene, prop):
+            try:
+                delattr(bpy.types.Scene, prop)
+            except Exception:
+                pass
 
 ###################################
 # REGISTER & UNREGISTER
@@ -407,12 +707,14 @@ def register():
     try:
         register_properties()
         bpy.utils.register_class(VIEW3D_PT_source2_utilities)
-        common_register()
         naming_register()
         uv_attributes_register()
         ao_baking_register()
-        if on_object_add not in bpy.app.handlers.depsgraph_update_post:
-            bpy.app.handlers.depsgraph_update_post.append(on_object_add)
+
+        _new_objects.clear()
+
+        if on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post:
+            bpy.app.handlers.depsgraph_update_post.append(on_depsgraph_update)
     except Exception as e:
         print(f"Error registering Source 2 Utilities: {e}")
         unregister()
@@ -420,21 +722,23 @@ def register():
 
 def unregister():
     try:
-        if on_object_add in bpy.app.handlers.depsgraph_update_post:
-            bpy.app.handlers.depsgraph_update_post.remove(on_object_add)
+        if on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
+            bpy.app.handlers.depsgraph_update_post.remove(on_depsgraph_update)
     except Exception:
         pass
+
     for unregister_func in (ao_baking_unregister, uv_attributes_unregister, naming_unregister):
         try:
             unregister_func()
         except Exception:
             pass
+
     try:
         bpy.utils.unregister_class(VIEW3D_PT_source2_utilities)
     except Exception:
         pass
+
     unregister_properties()
-    common_unregister()
 
 if __name__ == "__main__":
     register()
