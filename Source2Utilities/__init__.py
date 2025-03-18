@@ -24,7 +24,7 @@ bl_info = {
     'blender': (3, 6, 0),
     'location': 'View3D > Source 2',
     'description': 'Utility tools for Source 2 workflows',
-    'doc_url': '',
+    'doc_url': 'https://github.com/dertwist/Source2Utilities',
     'tracker_url': '',
     'category': 'Object'
 }

@@ -11,3 +11,10 @@ A Blender addon that provides utility tools for Source 2 workflows.
 - **Object Naming**: Easily apply naming conventions to your objects with customizable prefixes, names, and suffixes
 - **UV Maps & Attributes**: Rename UV maps and convert color attributes for Source 2 compatibility
 - **Ambient Occlusion Baking**: Bake AO directly to vertex color attributes using SXAO or Geometry Nodes
+
+## Demo
+
+<video controls width="640">
+  <source src="readme/demo.mp4" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
