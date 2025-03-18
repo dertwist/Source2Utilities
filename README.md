@@ -14,7 +14,4 @@ A Blender addon that provides utility tools for Source 2 workflows.
 
 ## Demo
 
-<video controls width="640">
-  <source src="https://github.com/dertwist/Source2Utilities/raw/main/readme/demo.mp4" type="video/mp4">
-  Your browser does not support the video tag.
-</video>
+<img src="https://github.com/dertwist/Source2Utilities/raw/main/readme/demo.png" alt="Demo image" width="640">
