@@ -5,7 +5,7 @@ import random
 import math
 import statistics
 from mathutils import Vector
-from bpy.props import StringProperty, BoolProperty, EnumProperty, IntProperty, FloatProperty
+from bpy.props import StringProperty, BoolProperty, EnumProperty, IntProperty, FloatProperty, FloatVectorProperty
 from bpy.types import Panel, Operator
 from bpy.app.handlers import persistent
 
@@ -20,7 +20,7 @@ from .modules import color_attributes  # Color attributes module
 bl_info = {
     'name': 'Source 2 Utilities',
     'author': 'Nucky3d',
-    'version': (0, 3, 0),
+    'version': (0, 4, 0),
     'blender': (3, 6, 0),
     'location': 'View3D > Source 2',
     'description': 'Utility tools for Source 2 workflows',
@@ -97,6 +97,7 @@ class VIEW3D_PT_source2_utilities(Panel):
             col.prop(scene, "s2_ao_contrast", text="Contrast")
             col.prop(scene, "s2_ao_bias", text="Bias")
             col.prop(scene, "s2_ao_invert", text="Invert")
+            col.prop(scene, "s2_ao_tint", text="AO Tint")
 
         row = box.row()
         row.prop(scene, "s2_ao_ground_plane", text="Ground Plane")
@@ -221,6 +222,26 @@ def register_properties():
         description="Invert the AO result",
         default=False
     )
+    scene.s2_ao_tint = FloatVectorProperty(
+        name="AO Tint",
+        description="Tint color for Ambient Occlusion",
+        subtype='COLOR',
+        default=(0.0, 0.0, 0.0),
+        min=0.0,
+        max=1.0
+    )
+
+def unregister_properties():
+    for prop in ["s2_prefix", "s2_name", "s2_suffix", "s2_add_sizes", "s2_size_format",
+                "s2_auto_apply_to_new", "s2_ao_attribute", "s2_ao_ray_count",
+                "s2_ao_distance", "s2_ao_global_local_mix", "s2_ao_ground_plane",
+                "s2_ao_geonode_ao", "s2_ao_expand_advanced", "s2_ao_intensity",
+                "s2_ao_contrast", "s2_ao_bias", "s2_ao_invert", "s2_ao_tint"]:
+        if hasattr(bpy.types.Scene, prop):
+            try:
+                delattr(bpy.types.Scene, prop)
+            except Exception:
+                pass
 
 _new_objects = set()
 _processed_objects = set()

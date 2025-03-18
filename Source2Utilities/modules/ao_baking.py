@@ -36,6 +36,7 @@ class OBJECT_OT_bake_ao_to_selected_attribute(bpy.types.Operator):
         contrast = scene.s2_ao_contrast
         invert = scene.s2_ao_invert
         bias = scene.s2_ao_bias
+        tint = scene.s2_ao_tint  # New AO Tint property
 
         # Save the original active object and selection state to restore later
         original_active = context.view_layer.objects.active
@@ -79,9 +80,8 @@ class OBJECT_OT_bake_ao_to_selected_attribute(bpy.types.Operator):
                     colors = generator.occlusion_list(obj, raycount=ray_count, blend=local_global_mix, dist=ray_distance, groundplane=ground_plane)
                     if temp_plane:
                         bpy.data.objects.remove(temp_plane, do_unlink=True)
-
-                    # Apply post-processing to the colors
-                    colors = self.post_process_colors(colors, intensity, contrast, invert, bias)
+                # Apply post-processing to the colors including the AO Tint
+                colors = self.post_process_colors(colors, intensity, contrast, invert, bias, tint)
 
                 # Verify color data was computed and matches the expected length
                 if not colors:
@@ -136,8 +136,11 @@ class OBJECT_OT_bake_ao_to_selected_attribute(bpy.types.Operator):
         else:
             return utils.report_info(self, f"Successfully baked SXAO to '{target_attr}' on all {processed_count} objects")
 
-    def post_process_colors(self, colors, intensity, contrast, invert, bias):
-        """Apply post-processing to the AO colors based on user parameters."""
+    def post_process_colors(self, colors, intensity, contrast, invert, bias, tint):
+        """Apply post-processing to the AO colors based on user parameters and add the tint value.
+        In this implementation, the tint is added to the AO value so that fully occluded (dark) areas
+        receive the tint directly, while ensuring values do not exceed 1.0.
+        """
         processed_colors = colors.copy()
 
         # Process each color value
@@ -153,7 +156,7 @@ class OBJECT_OT_bake_ao_to_selected_attribute(bpy.types.Operator):
                 ao_value = 0.5 + (ao_value - 0.5) * contrast
                 ao_value = max(0.0, min(1.0, ao_value))
 
-            # Apply intensity
+            # Apply intensity: This adjusts the AO factor for darkening/lightening
             ao_value = 1.0 - ((1.0 - ao_value) * intensity)
             ao_value = max(0.0, min(1.0, ao_value))
 
@@ -161,10 +164,12 @@ class OBJECT_OT_bake_ao_to_selected_attribute(bpy.types.Operator):
             if invert:
                 ao_value = 1.0 - ao_value
 
-            # Set the processed value back to the color array
-            processed_colors[i] = ao_value
-            processed_colors[i+1] = ao_value
-            processed_colors[i+2] = ao_value
+            # Add tint value so that darker areas use the tint.
+            # This is an additive mix: the final channel value is the computed AO value plus the tint value
+            # (clamped so that values do not exceed 1.0)
+            processed_colors[i]   = min(1.0, ao_value + tint[0])
+            processed_colors[i+1] = min(1.0, ao_value + tint[1])
+            processed_colors[i+2] = min(1.0, ao_value + tint[2])
             # Keep alpha at 1.0
             processed_colors[i+3] = 1.0
 
