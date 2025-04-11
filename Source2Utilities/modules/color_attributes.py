@@ -211,9 +211,9 @@ class VIEW3D_PT_color_attributes(Panel):
         # Custom color picker
         layout.prop(scene, "s2_custom_color", text="Color Picker")
 
-        # Apply custom color button
+        # Apply custom color button, ensuring the value is passed as a tuple
         op_custom = layout.operator("object.fill_color_attribute", text="Apply Color", icon='CHECKMARK')
-        op_custom.fill_color = scene.s2_custom_color
+        op_custom.fill_color = tuple(scene.s2_custom_color)
 
 
 # ----------------------------------------------------------------
@@ -230,12 +230,14 @@ def register_properties():
     """Register scene properties for custom color and attribute selection."""
     scene = bpy.types.Scene
 
-    # Custom color property
+    # Custom color property with proper slider bounds (0 to 1)
     scene.s2_custom_color = FloatVectorProperty(
         name="Custom Color",
         subtype='COLOR',
         size=3,
         default=(1.0, 0.5, 0.0),
+        min=0.0,
+        max=1.0,
         description="Select a custom fill color"
     )
 
