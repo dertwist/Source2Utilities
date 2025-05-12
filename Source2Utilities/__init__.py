@@ -18,7 +18,7 @@ from .modules import ao_baking, naming, attributes
 from .modules import color_attributes  # Color attributes module
 
 bl_info = {
-    'name': 'Source 2 Utilities',
+    'name': 'Source 2 Utilities F',
     'author': 'Nucky3d',
     'version': (0, 6, 0),
     'blender': (3, 6, 0),
