@@ -20,7 +20,7 @@ from .modules import color_attributes  # Color attributes module
 bl_info = {
     'name': 'Source 2 Utilities',
     'author': 'Nucky3d',
-    'version': (0, 6, 1),
+    'version': (0, 6, 2),
     'blender': (3, 6, 0),
     'location': 'View3D > Source 2',
     'description': 'Utility tools for Source 2 workflows',

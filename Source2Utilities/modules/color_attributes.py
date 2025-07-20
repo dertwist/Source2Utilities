@@ -27,21 +27,21 @@ shading_preserve = ['SOLID', 'MATCAP', 'MATERIAL', False]
 # ----------------------------------------------------------------
 # Helper Function: apply_color
 # ----------------------------------------------------------------
-def apply_color(obj, attr_name, color_tuple):
+def apply_color(obj, attr_name, color_tuple, edit_mode=False):
     """
     Applies the specified color to the object's color attribute.
     In Edit Mode, applies the color only to selected faces.
     In Object Mode, applies the color to all loops.
 
     Parameters:
-         obj: active mesh object.
+         obj: mesh object to apply color to.
          attr_name: name of the color attribute.
          color_tuple: tuple of 3 floats (RGB); alpha defaults to 1.0.
+         edit_mode: whether to apply only to selected faces (True) or entire object (False).
     """
     rgba = (*color_tuple, 1.0)  # Ensure alpha=1.0
-    mode = bpy.context.mode
 
-    if mode == 'EDIT_MESH':
+    if edit_mode:
         # Use bmesh for edit mode operations
         mesh = obj.data
         bm = bmesh.from_edit_mesh(mesh)
@@ -92,15 +92,31 @@ class OBJECT_OT_fill_color_attribute(Operator):
     )
 
     def execute(self, context):
-        obj = context.active_object
-        if not obj or obj.type != 'MESH':
-            return utils.report_error(self, "No mesh object selected")
+        # In Edit Mode, work with the active object only
+        if context.mode == 'EDIT_MESH':
+            obj = context.active_object
+            if not obj or obj.type != 'MESH':
+                return utils.report_error(self, "No mesh object selected")
+            
+            # Get target attribute from scene property
+            attr_name = context.scene.s2_selected_color_attribute
+            
+            # Apply the color using helper function with edit_mode=True
+            apply_color(obj, attr_name, self.fill_color, edit_mode=True)
+            return {'FINISHED'}
+        
+        # In Object Mode, work with all selected mesh objects
+        selected_meshes = [obj for obj in context.selected_objects if obj.type == 'MESH']
+        if not selected_meshes:
+            return utils.report_error(self, "No mesh objects selected")
 
         # Get target attribute from scene property
         attr_name = context.scene.s2_selected_color_attribute
 
-        # Apply the color using helper function
-        apply_color(obj, attr_name, self.fill_color)
+        # Apply the color to all selected objects with edit_mode=False
+        for obj in selected_meshes:
+            apply_color(obj, attr_name, self.fill_color, edit_mode=False)
+        
         return {'FINISHED'}
 
 
